@@ -1,5 +1,8 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
+import torch as th
 
 from stable_baselines3.common.logger import (
     DEBUG,
@@ -18,7 +21,9 @@ from stable_baselines3.common.logger import (
     reset,
     set_level,
     warn,
+    Video
 )
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
 KEY_VALUES = {
     "test": 1,
@@ -96,3 +101,39 @@ def test_make_output_fail(tmp_path):
     """
     with pytest.raises(ValueError):
         make_output_format("dummy_format", tmp_path)
+
+
+@pytest.mark.parametrize("_format", ["stdout", "log", "json", "csv", "tensorboard"])
+def test_report_video(tmp_path, _format):
+    """
+    test reporting a video to tensorboard, other formats are not supported
+
+    :param _format: (str) output format
+    """
+    if _format == "tensorboard":
+        # Skip if no tensorboard installed
+        pytest.importorskip("tensorboard")
+
+    video = Video(frames=th.rand(1, 20, 3, 16, 16), fps=20)
+    writer = make_output_format(_format, tmp_path)
+    writer.write({"video": video}, KEY_EXCLUDED)
+    if _format == "tensorboard":
+        assert_has_tb_tag(tmp_path, "video")
+    elif _format == "csv":
+        assert read_csv(tmp_path / "progress.csv").empty
+    elif _format == "json":
+        assert read_json(tmp_path / "progress.json").empty
+    elif _format == "log":
+        assert_is_empty_file(tmp_path / "log.txt")
+    writer.close()
+
+
+def assert_has_tb_tag(log_dir: Path, tag: str):
+    acc = EventAccumulator(str(log_dir))
+    acc.Reload()
+    images_tags = set(acc.Tags()["images"])
+    assert tag in images_tags
+
+
+def assert_is_empty_file(file: Path):
+    assert file.read_text() == ""

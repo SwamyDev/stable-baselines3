@@ -23,12 +23,19 @@ ERROR = 40
 DISABLED = 50
 
 
+class Video(object):
+    def __init__(self, frames: th.Tensor, fps: Union[float, int]):
+        self.frames = frames
+        self.fps = fps
+
+
 class KVWriter(object):
     """
     Key Value writer
     """
 
-    def write(self, key_values: Dict[str, Any], key_excluded: Dict[str, Union[str, Tuple[str, ...]]], step: int = 0) -> None:
+    def write(self, key_values: Dict[str, Any], key_excluded: Dict[str, Union[str, Tuple[str, ...]]],
+              step: int = 0) -> None:
         """
         Write a dictionary to file
 
@@ -83,6 +90,9 @@ class HumanOutputFormat(KVWriter, SeqWriter):
             if excluded is not None and "stdout" in excluded:
                 continue
 
+            if isinstance(value, Video):
+                continue
+
             if isinstance(value, float):
                 # Align left
                 value_str = f"{value:<8.3g}"
@@ -94,7 +104,7 @@ class HumanOutputFormat(KVWriter, SeqWriter):
                 key2str[self._truncate(tag)] = ""
             # Remove tag from key
             if tag is not None and tag in key:
-                key = str("   " + key[len(tag) :])
+                key = str("   " + key[len(tag):])
 
             key2str[self._truncate(key)] = self._truncate(value_str)
 
@@ -149,11 +159,16 @@ class JSONOutputFormat(KVWriter):
         """
         self.file = open(filename, "wt")
 
-    def write(self, key_values: Dict[str, Any], key_excluded: Dict[str, Union[str, Tuple[str, ...]]], step: int = 0) -> None:
+    def write(self, key_values: Dict[str, Any], key_excluded: Dict[str, Union[str, Tuple[str, ...]]],
+              step: int = 0) -> None:
+        to_remove = []
         for (key, value), (_, excluded) in zip(sorted(key_values.items()), sorted(key_excluded.items())):
 
             if excluded is not None and "json" in excluded:
                 continue
+
+            if isinstance(value, Video):
+                to_remove.append(key)
 
             if hasattr(value, "dtype"):
                 if value.shape == () or len(value) == 1:
@@ -162,6 +177,10 @@ class JSONOutputFormat(KVWriter):
                 else:
                     # otherwise, a value is a numpy array, serialize as a list or nested lists
                     key_values[key] = value.tolist()
+
+        for key in to_remove:
+            del key_values[key]
+
         self.file.write(json.dumps(key_values) + "\n")
         self.file.flush()
 
@@ -185,7 +204,8 @@ class CSVOutputFormat(KVWriter):
         self.keys = []
         self.separator = ","
 
-    def write(self, key_values: Dict[str, Any], key_excluded: Dict[str, Union[str, Tuple[str, ...]]], step: int = 0) -> None:
+    def write(self, key_values: Dict[str, Any], key_excluded: Dict[str, Union[str, Tuple[str, ...]]],
+              step: int = 0) -> None:
         # Add our current row to the history
         extra_keys = key_values.keys() - self.keys
         if extra_keys:
@@ -206,7 +226,7 @@ class CSVOutputFormat(KVWriter):
             if i > 0:
                 self.file.write(",")
             value = key_values.get(key)
-            if value is not None:
+            if value is not None and not isinstance(value, Video):
                 self.file.write(str(value))
         self.file.write("\n")
         self.file.flush()
@@ -228,7 +248,8 @@ class TensorBoardOutputFormat(KVWriter):
         assert SummaryWriter is not None, "tensorboard is not installed, you can use " "pip install tensorboard to do so"
         self.writer = SummaryWriter(log_dir=folder)
 
-    def write(self, key_values: Dict[str, Any], key_excluded: Dict[str, Union[str, Tuple[str, ...]]], step: int = 0) -> None:
+    def write(self, key_values: Dict[str, Any], key_excluded: Dict[str, Union[str, Tuple[str, ...]]],
+              step: int = 0) -> None:
 
         for (key, value), (_, excluded) in zip(sorted(key_values.items()), sorted(key_excluded.items())):
 
@@ -240,6 +261,9 @@ class TensorBoardOutputFormat(KVWriter):
 
             if isinstance(value, th.Tensor):
                 self.writer.add_histogram(key, value, step)
+
+            if isinstance(value, Video):
+                self.writer.add_video(key, value.frames, step, value.fps)
 
         # Flush the output to the file
         self.writer.flush()
