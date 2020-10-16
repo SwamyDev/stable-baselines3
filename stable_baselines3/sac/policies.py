@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Sequence
 
 import gym
 import torch as th
@@ -181,7 +181,7 @@ class Actor(BasePolicy):
         # return action and associated log prob
         return self.action_dist.log_prob_from_params(mean_actions, log_std, **kwargs)
 
-    def _predict(self, observation: th.Tensor, deterministic: bool = False) -> th.Tensor:
+    def _predict(self, observation: th.Tensor, state: Optional[th.Tensor] = None, mask: Optional[Sequence[bool]] = None, deterministic: bool = False) -> th.Tensor:
         return self.forward(observation, deterministic)
 
 
@@ -334,7 +334,7 @@ class SACPolicy(BasePolicy):
     def forward(self, obs: th.Tensor, deterministic: bool = False) -> th.Tensor:
         return self._predict(obs, deterministic=deterministic)
 
-    def _predict(self, observation: th.Tensor, deterministic: bool = False) -> th.Tensor:
+    def _predict(self, observation: th.Tensor, state: Optional[th.Tensor] = None, mask: Optional[Sequence[bool]] = None, deterministic: bool = False) -> th.Tensor:
         return self.actor(observation, deterministic)
 
 

@@ -3,7 +3,7 @@
 import collections
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union, Sequence
 
 import gym
 import numpy as np
@@ -82,16 +82,25 @@ class BaseModel(nn.Module, ABC):
     def forward(self, *args, **kwargs):
         del args, kwargs
 
-    def extract_features(self, obs: th.Tensor) -> th.Tensor:
+    @property
+    def initial_state(self) -> Union[None, th.Tensor]:
+        return None
+
+    def extract_features(self, obs: th.Tensor, state: Optional[th.Tensor] = None, mask: Optional[np.ndarray] = None) -> th.Tensor:
         """
         Preprocess the observation if needed and extract features.
 
         :param obs:
+        :param state: State of the recurrent network
+        :param mask: Mask of the recurrent network's state
         :return:
         """
         assert self.features_extractor is not None, "No feature extractor was set"
         preprocessed_obs = preprocess_obs(obs, self.observation_space, normalize_images=self.normalize_images)
-        return self.features_extractor(preprocessed_obs)
+        if state is None:
+            return self.features_extractor(preprocessed_obs)
+        else:
+            return self.features_extractor(preprocessed_obs, state, mask)
 
     def _get_data(self) -> Dict[str, Any]:
         """
@@ -199,7 +208,7 @@ class BasePolicy(BaseModel):
                 module.bias.data.fill_(0.0)
 
     @abstractmethod
-    def _predict(self, observation: th.Tensor, deterministic: bool = False) -> th.Tensor:
+    def _predict(self, observation: th.Tensor, state: Optional[th.Tensor] = None, mask: Optional[np.ndarray] = None, deterministic: bool = False) -> th.Tensor:
         """
         Get the action according to the policy for a given observation.
 
@@ -207,6 +216,8 @@ class BasePolicy(BaseModel):
         implement this, e.g. if they are a Critic in an Actor-Critic method.
 
         :param observation:
+        :param state: State of recurrent network
+        :param mask: Mask of recurrent network state
         :param deterministic: Whether to use stochastic or deterministic actions
         :return: Taken action according to the policy
         """
@@ -230,10 +241,10 @@ class BasePolicy(BaseModel):
             (used in recurrent policies)
         """
         # TODO (GH/1): add support for RNN policies
-        # if state is None:
-        #     state = self.initial_state
-        # if mask is None:
-        #     mask = [False for _ in range(self.n_envs)]
+        if state is None:
+            state = self.initial_state
+        if mask is None and state is not None:
+            mask = np.array([False for _ in range(self.n_envs)])
         observation = np.array(observation)
 
         # Handle the different cases for images
@@ -256,7 +267,7 @@ class BasePolicy(BaseModel):
 
         observation = th.as_tensor(observation).to(self.device)
         with th.no_grad():
-            actions = self._predict(observation, deterministic=deterministic)
+            actions = self._predict(observation, state=state, mask=mask, deterministic=deterministic)
         # Convert to numpy
         actions = actions.cpu().numpy()
 
@@ -504,33 +515,36 @@ class ActorCriticPolicy(BasePolicy):
         # Setup optimizer with initial learning rate
         self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs)
 
-    def forward(self, obs: th.Tensor, deterministic: bool = False) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+    def forward(self, obs: th.Tensor, state: Optional[th.Tensor] = None, mask: Optional[Sequence[bool]] = None, deterministic: bool = False) -> Tuple[th.Tensor, th.Tensor, th.Tensor, Union[None, th.Tensor]]:
         """
         Forward pass in all the networks (actor and critic)
 
         :param obs: Observation
         :param deterministic: Whether to sample or use deterministic actions
-        :return: action, value and log probability of the action
+        :param state: State of recurrent network
+        :param mask: Mask of recurrent network's state
+        :return: action, value, log probability of the action and optionally new state of recurrent network
         """
-        latent_pi, latent_vf, latent_sde = self._get_latent(obs)
+        latent_pi, latent_vf, latent_sde = self._get_latent(obs, state, mask)
         # Evaluate the values for the given observations
         values = self.value_net(latent_vf)
         distribution = self._get_action_dist_from_latent(latent_pi, latent_sde=latent_sde)
         actions = distribution.get_actions(deterministic=deterministic)
         log_prob = distribution.log_prob(actions)
-        return actions, values, log_prob
+        return actions, values, log_prob, None
 
-    def _get_latent(self, obs: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+    def _get_latent(self, obs: th.Tensor, state: Union[None, th.Tensor], mask: Union[None, Sequence[bool]]) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
         """
         Get the latent code (i.e., activations of the last layer of each network)
         for the different networks.
 
         :param obs: Observation
+        :param state: State of recurrent network
         :return: Latent codes
             for the actor, the value function and for gSDE function
         """
         # Preprocess the observation if needed
-        features = self.extract_features(obs)
+        features = self.extract_features(obs, state, mask)
         latent_pi, latent_vf = self.mlp_extractor(features)
 
         # Features for sde
@@ -565,7 +579,7 @@ class ActorCriticPolicy(BasePolicy):
         else:
             raise ValueError("Invalid action distribution")
 
-    def _predict(self, observation: th.Tensor, deterministic: bool = False) -> th.Tensor:
+    def _predict(self, observation: th.Tensor, state: Optional[th.Tensor] = None, mask: Optional[Sequence[bool]] = None, deterministic: bool = False) -> th.Tensor:
         """
         Get the action according to the policy for a given observation.
 
@@ -573,21 +587,23 @@ class ActorCriticPolicy(BasePolicy):
         :param deterministic: Whether to use stochastic or deterministic actions
         :return: Taken action according to the policy
         """
-        latent_pi, _, latent_sde = self._get_latent(observation)
+        latent_pi, _, latent_sde = self._get_latent(observation, state, mask)
         distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
         return distribution.get_actions(deterministic=deterministic)
 
-    def evaluate_actions(self, obs: th.Tensor, actions: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+    def evaluate_actions(self, obs: th.Tensor, actions: th.Tensor, state: Optional[th.Tensor] = None, mask: Optional[Sequence[bool]] = None) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
         """
         Evaluate actions according to the current policy,
         given the observations.
 
         :param obs:
         :param actions:
+        :param state: State of the recurrent network
+        :param mask: Mask of the recurrent network's state
         :return: estimated value, log likelihood of taking those actions
             and entropy of the action distribution.
         """
-        latent_pi, latent_vf, latent_sde = self._get_latent(obs)
+        latent_pi, latent_vf, latent_sde = self._get_latent(obs, state, mask)
         distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
         log_prob = distribution.log_prob(actions)
         values = self.value_net(latent_vf)

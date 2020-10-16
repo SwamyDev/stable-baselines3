@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Callable, Dict, List, Optional, Type, Sequence
 
 import gym
 import torch as th
@@ -58,7 +58,7 @@ class QNetwork(BasePolicy):
         """
         return self.q_net(self.extract_features(obs))
 
-    def _predict(self, observation: th.Tensor, deterministic: bool = True) -> th.Tensor:
+    def _predict(self, observation: th.Tensor, state: Optional[th.Tensor] = None, mask: Optional[Sequence[bool]] = None, deterministic: bool = True) -> th.Tensor:
         q_values = self.forward(observation)
         # Greedy action
         action = q_values.argmax(dim=1).reshape(-1)
@@ -166,7 +166,7 @@ class DQNPolicy(BasePolicy):
     def forward(self, obs: th.Tensor, deterministic: bool = True) -> th.Tensor:
         return self._predict(obs, deterministic=deterministic)
 
-    def _predict(self, obs: th.Tensor, deterministic: bool = True) -> th.Tensor:
+    def _predict(self, obs: th.Tensor, state: Optional[th.Tensor] = None, mask: Optional[Sequence[bool]] = None, deterministic: bool = True) -> th.Tensor:
         return self.q_net._predict(obs, deterministic=deterministic)
 
     def _get_data(self) -> Dict[str, Any]:

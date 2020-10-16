@@ -116,6 +116,7 @@ class A2C(OnPolicyAlgorithm):
         # Update optimizer learning rate
         self._update_learning_rate(self.policy.optimizer)
 
+        state = self.rollout_buffer.starting_state
         # This will only loop once (get all data in one go)
         for rollout_data in self.rollout_buffer.get(batch_size=None):
 
@@ -125,7 +126,7 @@ class A2C(OnPolicyAlgorithm):
                 actions = actions.long().flatten()
 
             # TODO: avoid second computation of everything because of the gradient
-            values, log_prob, entropy = self.policy.evaluate_actions(rollout_data.observations, actions)
+            values, log_prob, entropy = self.policy.evaluate_actions(rollout_data.observations, actions, state, rollout_data.dones)
             values = values.flatten()
 
             # Normalize advantage (not present in the original implementation)

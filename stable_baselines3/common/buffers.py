@@ -85,7 +85,7 @@ class BaseBuffer(ABC):
         for data in zip(*args):
             self.add(*data)
 
-    def reset(self) -> None:
+    def reset(self, starting_state: Optional[th.Tensor] = None) -> None:
         """
         Reset the buffer.
         """
@@ -284,10 +284,11 @@ class RolloutBuffer(BaseBuffer):
         self.gamma = gamma
         self.observations, self.actions, self.rewards, self.advantages = None, None, None, None
         self.returns, self.dones, self.values, self.log_probs = None, None, None, None
+        self.starting_state = None
         self.generator_ready = False
         self.reset()
 
-    def reset(self) -> None:
+    def reset(self, starting_state: Optional[th.Tensor] = None) -> None:
         self.observations = np.zeros((self.buffer_size, self.n_envs) + self.obs_shape, dtype=np.float32)
         self.actions = np.zeros((self.buffer_size, self.n_envs, self.action_dim), dtype=np.float32)
         self.rewards = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
@@ -296,6 +297,7 @@ class RolloutBuffer(BaseBuffer):
         self.values = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.log_probs = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.advantages = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.starting_state = starting_state
         self.generator_ready = False
         super(RolloutBuffer, self).reset()
 
@@ -362,7 +364,7 @@ class RolloutBuffer(BaseBuffer):
         indices = np.random.permutation(self.buffer_size * self.n_envs)
         # Prepare the data
         if not self.generator_ready:
-            for tensor in ["observations", "actions", "values", "log_probs", "advantages", "returns"]:
+            for tensor in ["observations", "actions", "values", "log_probs", "advantages", "returns", "dones"]:
                 self.__dict__[tensor] = self.swap_and_flatten(self.__dict__[tensor])
             self.generator_ready = True
 
@@ -383,5 +385,6 @@ class RolloutBuffer(BaseBuffer):
             self.log_probs[batch_inds].flatten(),
             self.advantages[batch_inds].flatten(),
             self.returns[batch_inds].flatten(),
+            self.dones[batch_inds].flatten(),
         )
         return RolloutBufferSamples(*tuple(map(self.to_torch, data)))

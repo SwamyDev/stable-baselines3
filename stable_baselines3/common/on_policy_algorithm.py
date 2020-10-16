@@ -98,6 +98,8 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         if _init_setup_model:
             self._setup_model()
 
+        self.state = None
+
     def _setup_model(self) -> None:
         self._setup_lr_schedule()
         self.set_random_seed(self.seed)
@@ -119,6 +121,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
             **self.policy_kwargs  # pytype:disable=not-instantiable
         )
         self.policy = self.policy.to(self.device)
+        self.state = self.policy.initial_state
 
     def collect_rollouts(
         self, env: VecEnv, callback: BaseCallback, rollout_buffer: RolloutBuffer, n_rollout_steps: int
@@ -136,7 +139,8 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         """
         assert self._last_obs is not None, "No previous observation was provided"
         n_steps = 0
-        rollout_buffer.reset()
+        rollout_buffer.reset(starting_state=self.state)
+        dones = np.array([False for _ in range(self.n_envs)])
         # Sample new weights for the state dependent exploration
         if self.use_sde:
             self.policy.reset_noise(env.num_envs)
@@ -151,7 +155,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
             with th.no_grad():
                 # Convert to pytorch tensor
                 obs_tensor = th.as_tensor(self._last_obs).to(self.device)
-                actions, values, log_probs = self.policy.forward(obs_tensor)
+                actions, values, log_probs, self.state = self.policy.forward(obs_tensor, self.state, dones)
             actions = actions.cpu().numpy()
 
             # Rescale and perform action

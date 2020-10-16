@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Callable, Dict, List, Optional, Type, Sequence
 
 import gym
 import torch as th
@@ -71,7 +71,7 @@ class Actor(BasePolicy):
         features = self.extract_features(obs)
         return self.mu(features)
 
-    def _predict(self, observation: th.Tensor, deterministic: bool = False) -> th.Tensor:
+    def _predict(self, observation: th.Tensor, state: Optional[th.Tensor] = None, mask: Optional[Sequence[bool]] = None, deterministic: bool = False) -> th.Tensor:
         return self.forward(observation, deterministic=deterministic)
 
 
@@ -184,7 +184,7 @@ class TD3Policy(BasePolicy):
     def forward(self, observation: th.Tensor, deterministic: bool = False) -> th.Tensor:
         return self._predict(observation, deterministic=deterministic)
 
-    def _predict(self, observation: th.Tensor, deterministic: bool = False) -> th.Tensor:
+    def _predict(self, observation: th.Tensor, state: Optional[th.Tensor] = None, mask: Optional[Sequence[bool]] = None, deterministic: bool = False) -> th.Tensor:
         return self.actor(observation, deterministic=deterministic)
 
 
